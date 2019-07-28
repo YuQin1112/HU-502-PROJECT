@@ -1,0 +1,302 @@
+---
+title: "Classification for Eligibility of Loan Applicants"
+Group: 6
+author: "Yu Qin, William Alberto Torres Amesty, Bo Wan, Priyanka Sanjeev Walke"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction:
+
+Ultimate Thrift Corporation of America Co), which aims to expand its presence on the home mortgage market in newly formed US State of Michisota. According to Michisota laws, all interest rates related to mortgage loans must be offered at a fixed rate of 4.5% regardless of the applicant’s risk characteristic, which makes the loan approval process an important matter.
+
+The new mortgage loan start up aims to attack this particular market by designing a loan approval process that would allow them to grant mortgages based on applicants’ detailed information such as Gender, Education, Credit History, Income and others. Due to its inexperience in the new US State of Michisota, Shark Loaners, Inc will use historical experience to create a model that will serve as an initial approach for the loan approval process.
+
+
+```{r starting}
+library(mice)
+library(corrplot)
+df_loan = read.csv("data_group6.csv",header = TRUE)
+summary(df_loan) 
+# From the results shown by summary function, we find out that variable Credit_History need to be factored. ALso variables such as Gender, Married, Dependents, Self_Empolyed have empty values. Meanwhile variables such as LoanAmount, Loan_Amount_Term, Credit_History have NA value. One thing should be paid attention to is that Dependents variable have value as "3+", we might need to transfer this back to numeric value and replace "3+" as 3.
+
+str(df_loan)
+# If we look deeper into this dataset by using str function, we realize that all categorical variables are factored, however empty values from Variables like Gender are factoerd as one level too instead treating them as NA value. As a reuslt, we will need to chane the empty value to NA and re facotr the variables. Also, we think that Dependents variable might have impact on loan_status, so we will need to change it to numeric variable and change value 3+ to numeric 3.
+
+```
+
+# Data screening:
+
+## Accuracy:
+`
+    
+```{r accuracy}
+# Function helps to transfer one certain value to replacement value
+to_na = function(col,value,replace){
+  col[col == value] = replace
+  col
+}
+
+# Function helps to correct the factor
+to_fac = function(col){
+  as.factor(as.character(col))
+}
+
+# Factor variable Credit_History
+df_loan$Credit_History = as.factor(df_loan$Credit_History)
+
+# Correct variables such Gender, Married and Self_Employed.
+table(df_loan$Gender) # there are 3 levels, labelled as empty value, Female and Male.
+df_loan$Gender = to_na(df_loan$Gender,"",NA)
+summary(df_loan$Gender)
+str(df_loan$Gender)# As you can see, empty value has been assigned to NA, however, the level for empty value are still there with 0 quantity, so we need to re-factor variable Gender to get rid of this level.
+
+df_loan$Gender = to_fac(df_loan$Gender)
+summary(df_loan$Gender)
+str(df_loan$Gender)# As you can see, level of emptry has been removed, instead variable Gender has two levels labelled as "Female" and "Male".
+
+
+# Now we wil use exactly same idea to clean variables Married, Self_Employed
+df_loan$Married = to_na(df_loan$Married,"",NA )
+df_loan$Married  = to_fac(df_loan$Married)
+
+df_loan$Self_Employed = to_na(df_loan$Self_Employed,"",NA)
+df_loan$Self_Employed  = to_fac(df_loan$Self_Employed )
+
+# Variable Dependents is different, we need to first transfer the empty value to NA, then change value of "3+" to "3", to transfer this variable to numeric.
+
+
+#I'm not sure if we should numeric the number of dependents, what you all think about it?
+
+df_loan$Dependents = to_na(df_loan$Dependents,"",NA)
+df_loan$Dependents = to_fac(df_loan$Dependents)
+#Converting the Dependents column from Factors to Numeric and storing the values in Dependents1
+df_loan$Dependents1 = as.character(df_loan$Dependents)
+df_loan$Dependents1 = as.numeric(df_loan$Dependents,"3+","3")
+
+summary(df_loan)
+
+```
+
+## Missing data:
+ 
+        
+```{r missing}
+apply(df_loan,2, function(x) sum(is.na(x)))
+# The NA from categorical variables will be left alone at this moment, and will be pariwise eliminated during analysis.
+
+# We assume that the NA from variables LoanAmount and Loan_Amount_Term are not intentionally skipped, which is MCAR. So we check the percentage of NA to decide if we will leave them alone or apply MICE function on it.
+per_missing = function(x){
+  sum(is.na(x)) /length(x) * 100
+}
+
+missing = apply(df_loan[,c(9,10)],2,per_missing)
+table(missing)
+
+#Both percentage are smaller than 5%, so we would use MICE function to fill the missing value.
+temp = mice(df_loan[,c(9,10)])
+no_miss = complete(temp,1)
+summary(no_miss)
+df_loan = cbind(df_loan[,-c(9,10)], no_miss)
+summary(df_loan)
+```
+
+## Outliers:
+
+
+```{r outliers}
+
+#Since we cannot use Factors while calculating the Mahalanobis scores, we are sepearting the numerical columns in a separate data frame to use it for Mahalanobis score calculation. The columns used for Mahalanobis score calculation are ApplicantIncome, CoapplicantIncome, LoanAmount and Loan_Amount_Term
+
+mahalDF = df_loan[,c(7,8,13,14)]
+
+mahal = mahalanobis(mahalDF, colMeans(mahalDF), cov(mahalDF))
+
+# Calculating the Mahanlanobis cut off
+cutmahal = qchisq(0.9999, ncol(mahalDF))
+cutmahal
+
+badmahal = as.numeric(mahal > cutmahal)
+table(badmahal)
+
+# noOutDF stores stores the data from df_loan after removing the outliers
+noOutDF = subset(df_loan, badmahal < 1)
+noOutDF
+
+
+```
+
+# Assumptions:
+
+## Additivity: 
+
+  
+```{r additivity}
+# Calculating the Correlations between ApplicantIncome, CoapplicantIncome, LoanAmount and Loan_Amount_Term
+cor(noOutDF[, c(7,8,13,14)])
+corrplot(cor(noOutDF[, c(7,8,13,14)]))
+#LoanAmount and CoapplicantIncome seem to share a good positive correlation. However, the strongest correlation exists between LoanAmount and ApplicantIncome
+
+
+```
+ 
+## Linearity: 
+
+    
+```{r linearity}
+# Since we can only feed numeric columns to the Linear Regression Model, the numeric columns from the outlier free DF are extracted into a separate DF
+noOutNumericDF = noOutDF[, c(7,8,13,14)]
+random = rchisq(nrow(noOutNumericDF), 7)
+fake = lm(random~., data = noOutNumericDF)
+summary(fake)
+
+
+standardized = rstudent(fake)
+qqnorm(standardized)
+abline(0,1)
+# OR
+plot(fake, 2)
+
+# As per the QQ plot, the data appears to be normal but with some postive skewness and also a very few outliers.
+
+```
+
+## Normality: 
+
+```{r normality}
+
+hist(standardized, breaks=20)
+
+# The following histogram shows that the asumption of Normality is met but the distribution is slightly skewed to the right also with a few outliers. But since, our sample size is high, we should not worry about the normality
+```
+
+## Homogeneity/Homoscedasticity: 
+
+
+```{r homog-s}
+
+fitvalues = scale(fake$fitted.values)
+plot(fitvalues, standardized) 
+abline(0,0)
+abline(v = 0)
+
+#OR
+plot(fake,1)
+
+# the assumption of homoscedasticity and homogeneity is met as the data points appear to be equally distributed across botht he X Axis and the line (0,0)
+
+```
+
+
+## Linear regression
+
+first cleanup rows with missing and remove colomun `Loan_ID` and `Dependents` since they provide no information to our model. (Dependents is covered by Dependents1 column)
+
+
+```{r}
+cleandata = noOutDF[complete.cases(noOutDF), ]
+cleandata = cleandata[,-c(1,4)]
+```
+
+before we jump into modeling we want to add some risk indicators that derived from our dataset, to better help our predicting. 
+
+```{r risk indicator}
+# add risk indicators:
+# (PD) Probability of Default
+cleandata$PD = (cleandata$LoanAmount * 1000 / cleandata$Loan_Amount_Term) / (cleandata$ApplicantIncome + cleandata$CoapplicantIncome)
+# (LGD) Loss Given Default  : Lack of data
+# (EAD) Exposure at Default : Lack of data
+
+# we need further information to add Loss Given Default (LGD) and Exposure at Default (EAD).
+# we tipically need applicant's credit score, history of property price in Michisota. and liquidity risk on selling properties.
+# since we are lack of those data point, we will skip calculating LGD and EAD and use only PD as risk indicator.
+# our model will get better performace if we can acquire those risk indicator
+```
+
+First attemp linear regression with auto stepwise linear regression.
+
+```{r model1}
+model1 <- glm(Loan_Status ~.,family=binomial,data=cleandata)
+summary(model1)
+
+backword = step(model1)
+formula(backword)
+
+null <- glm(Loan_Status ~1,family=binomial,data=cleandata)
+forwards = step(null,scope=list(lower=formula(null),upper=formula(model1)), direction="forward")
+formula(forwards)
+
+# our forward and backword regression converged at formula:
+# Loan_Status ~ Married + Education + ApplicantIncome + Credit_History + Property_Area + Loan_Amount_Term + PD
+# apply this IV selection
+model1_revised <- glm(Loan_Status ~ Married + Education + ApplicantIncome + Credit_History + Property_Area + Loan_Amount_Term + PD,
+                     family=binomial,
+                     data=cleandata
+                     )
+
+summary(model1_revised)
+```
+
+Second attepm linear regression with auto stepwise linear regression. remove irrelevant categorical data by chi-square test.
+
+```{r model2}
+# in our first version of revised model, we include all IVs when modeling. 
+# in our second attemp, we want to remove some categorical predictors that intuitively not relevent to Loan_Status.
+# (we already have a conclusion on numeric crrelation in previous section and we choose to keep all numeric data.)
+# we using chi-square test to decide each categorical data is dependent or not with Loan_Status
+# for each categorical column, we define:
+#     H0: the categorical predictor is independent to Loan_Status
+#     HA: the categorical predictor is dependent to Loan_Status
+#
+# apply chi-square test to each data point:
+
+# looking for p < 0.001 to reject H0: two vars are independent
+chisq.test(table(cleandata$Credit_History, cleandata$Loan_Status)) 
+# reject H0
+
+chisq.test(table(cleandata$Gender, cleandata$Loan_Status))         
+# failed to reject H0
+
+chisq.test(table(cleandata$Married, cleandata$Loan_Status))        
+# failed to reject H0
+
+chisq.test(table(cleandata$Education, cleandata$Loan_Status))      
+# failed to reject H0
+
+chisq.test(table(cleandata$Self_Employed, cleandata$Loan_Status))  
+# failed to reject H0
+
+chisq.test(table(cleandata$Property_Area, cleandata$Loan_Status)) 
+# failed to reject H0
+
+# we choose Credit_History and drop other data since Credit_History has some relations with Loan_Status derived by chi square test.
+
+cleandata2 = cleandata = cleandata[,-c(1,2,3,4,8)]
+
+
+model2 <- glm(Loan_Status ~.,family=binomial,data=cleandata2)
+summary(model2)
+
+backword = step(model2)
+formula(backword)
+
+null <- glm(Loan_Status ~1,family=binomial,data=cleandata2)
+forwards = step(null,scope=list(lower=formula(null),upper=formula(model2)), direction="forward")
+formula(forwards)
+
+# the linear regression result isn't fit our expectation. so we drop this attemp2 modeling.
+```
+
+Conclusion:
+
+we would use model
+
+```{r}
+summary(model1_revised)
+```
+
+as our best fitted model.
